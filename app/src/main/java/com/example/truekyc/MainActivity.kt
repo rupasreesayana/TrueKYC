@@ -6,45 +6,59 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.telephony.SmsManager
+
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.VerifiedUser
+
 import androidx.compose.material3.*
+
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.viewinterop.AndroidView
+
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
+
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetectorOptions
+
 import com.google.mediapipe.framework.image.MediaImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
+import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.objectdetector.ObjectDetector
+
+import java.io.File
 import java.util.concurrent.Executors
+
+import kotlinx.coroutines.delay
 
 
 class MainActivity : ComponentActivity() {
@@ -69,8 +83,75 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            TrueKYCApp()
+            TrueKYCLaunch()
         }
+    }
+}
+
+
+/* =========================================================
+   TRUEKYC LAUNCH / SPLASH
+========================================================= */
+
+@Composable
+fun TrueKYCLaunch() {
+
+    var showSplash by remember {
+        mutableStateOf(true)
+    }
+
+    LaunchedEffect(Unit) {
+        delay(1600)
+        showSplash = false
+    }
+
+    if (showSplash) {
+        TrueKYCSplashScreen()
+    } else {
+        TrueKYCApp()
+    }
+}
+
+
+@Composable
+fun TrueKYCSplashScreen() {
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.White),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+
+        Icon(
+            imageVector = Icons.Default.VerifiedUser,
+            contentDescription = "TrueKYC",
+            modifier = Modifier.size(110.dp),
+            tint = Color(0xFF102A43)
+        )
+
+        Spacer(
+            modifier = Modifier.height(18.dp)
+        )
+
+        Text(
+            text = "TrueKYC",
+            fontSize = 30.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF102A43)
+        )
+
+        Spacer(
+            modifier = Modifier.height(6.dp)
+        )
+
+        Text(
+            text = "Secure. Private. On-Device.",
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium,
+            color = Color.Gray
+        )
     }
 }
 
@@ -96,20 +177,16 @@ fun sendSecuritySms(
         }
 
         val message = """
-TrueKYC Security Alert
+            TrueKYC Security Alert
 
-A KYC verification attempt was flagged for security review.
+            A KYC verification attempt was flagged for security review.
 
+            If you did not initiate this verification, please contact your bank immediately.
 
-If you did not initiate this verification, please contact your bank immediately.
-
-Verification is temporarily on hold for 12 hours.
+            Verification is temporarily on hold for 12 hours.
         """.trimIndent()
 
-        val smsManager =
-            SmsManager.getDefault()
-
-        smsManager.sendTextMessage(
+        SmsManager.getDefault().sendTextMessage(
             phoneNumber,
             null,
             message,
@@ -123,6 +200,149 @@ Verification is temporarily on hold for 12 hours.
 
         e.printStackTrace()
         false
+    }
+}
+
+
+/* =========================================================
+   LOCAL GEMMA AI
+========================================================= */
+
+class LocalKycGemma(
+    private val context: android.content.Context
+) {
+
+    private var llmInference: LlmInference? = null
+
+    private val executor =
+        Executors.newSingleThreadExecutor()
+
+    fun initialize(
+        onReady: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+
+        executor.execute {
+
+            try {
+
+                val modelFile =
+                    File(
+                        context.filesDir,
+                        "gemma3-270m-it-q8.task"
+                    )
+
+                if (!modelFile.exists()) {
+
+                    context.assets
+                        .open("gemma3-270m-it-q8.task")
+                        .use { input ->
+
+                            modelFile
+                                .outputStream()
+                                .use { output ->
+
+                                    input.copyTo(output)
+                                }
+                        }
+                }
+
+                val options =
+                    LlmInference.LlmInferenceOptions
+                        .builder()
+                        .setModelPath(
+                            modelFile.absolutePath
+                        )
+                        .setMaxTokens(128)
+                        .build()
+
+                llmInference =
+                    LlmInference.createFromOptions(
+                        context,
+                        options
+                    )
+
+                Handler(
+                    Looper.getMainLooper()
+                ).post {
+                    onReady()
+                }
+
+            } catch (e: Exception) {
+
+                Handler(
+                    Looper.getMainLooper()
+                ).post {
+
+                    onError(
+                        e.message
+                            ?: "Gemma initialization failed"
+                    )
+                }
+            }
+        }
+    }
+
+    fun generateSecurityExplanation(
+        situation: String,
+        callback: (String) -> Unit
+    ) {
+
+        executor.execute {
+
+            try {
+
+                val prompt = """
+                    You are a local KYC security assistant.
+
+                    Analyze this KYC security event:
+
+                    $situation
+
+                    Give one short security explanation
+                    for a bank officer.
+
+                    Do not diagnose the customer.
+                    Do not invent facts.
+                    Keep it under 35 words.
+                """.trimIndent()
+
+                val response =
+                    llmInference
+                        ?.generateResponse(prompt)
+                        ?: "Local AI is not ready."
+
+                Handler(
+                    Looper.getMainLooper()
+                ).post {
+
+                    callback(
+                        response.trim()
+                    )
+                }
+
+            } catch (e: Exception) {
+
+                Handler(
+                    Looper.getMainLooper()
+                ).post {
+
+                    callback(
+                        "Security event detected. Verification has been paused for review."
+                    )
+                }
+            }
+        }
+    }
+
+    fun close() {
+
+        try {
+            llmInference?.close()
+        } catch (_: Exception) {
+        }
+
+        executor.shutdown()
     }
 }
 
@@ -181,11 +401,8 @@ fun TrueKYCApp() {
 
                     onAdmitCustomer = { index ->
 
-                        currentCustomerIndex =
-                            index
-
-                        currentScreen =
-                            "kyc"
+                        currentCustomerIndex = index
+                        currentScreen = "kyc"
                     }
                 )
             }
@@ -204,8 +421,7 @@ fun TrueKYCApp() {
                         ),
 
                     onContinue = {
-                        currentScreen =
-                            "instructions"
+                        currentScreen = "instructions"
                     }
                 )
             }
@@ -214,8 +430,7 @@ fun TrueKYCApp() {
 
                 InstructionsScreen(
                     onStartVerification = {
-                        currentScreen =
-                            "camera"
+                        currentScreen = "camera"
                     }
                 )
             }
@@ -235,11 +450,8 @@ fun TrueKYCApp() {
                             completedCustomers +
                                     currentCustomerIndex
 
-                        verificationResult =
-                            true
-
-                        currentScreen =
-                            "result"
+                        verificationResult = true
+                        currentScreen = "result"
                     },
 
                     onSuspicious = {
@@ -252,11 +464,8 @@ fun TrueKYCApp() {
                             completedCustomers +
                                     currentCustomerIndex
 
-                        verificationResult =
-                            false
-
-                        currentScreen =
-                            "result"
+                        verificationResult = false
+                        currentScreen = "result"
                     }
                 )
             }
@@ -285,13 +494,11 @@ fun TrueKYCApp() {
                             currentCustomerIndex =
                                 nextIndex
 
-                            currentScreen =
-                                "queue"
+                            currentScreen = "queue"
 
                         } else {
 
-                            currentScreen =
-                                "welcome"
+                            currentScreen = "welcome"
                         }
                     }
                 )
@@ -414,23 +621,17 @@ fun WelcomeScreen(
         )
 
         Spacer(
-            modifier =
-                Modifier.height(8.dp)
+            modifier = Modifier.height(8.dp)
         )
 
         Text(
-            text =
-                "Secure Digital KYC Verification",
-
+            text = "Secure Digital KYC Verification",
             fontSize = 16.sp,
-
-            color =
-                Color.Gray
+            color = Color.Gray
         )
 
         Spacer(
-            modifier =
-                Modifier.height(30.dp)
+            modifier = Modifier.height(30.dp)
         )
 
         OutlinedTextField(
@@ -438,27 +639,19 @@ fun WelcomeScreen(
             onValueChange = {
                 bankName = it
             },
-
-            modifier =
-                Modifier.fillMaxWidth(),
-
+            modifier = Modifier.fillMaxWidth(),
             label = {
                 Text("Bank / Institution")
             },
-
             placeholder = {
                 Text("Enter bank name")
             },
-
             singleLine = true,
-
-            shape =
-                RoundedCornerShape(12.dp)
+            shape = RoundedCornerShape(12.dp)
         )
 
         Spacer(
-            modifier =
-                Modifier.height(14.dp)
+            modifier = Modifier.height(14.dp)
         )
 
         OutlinedTextField(
@@ -466,27 +659,19 @@ fun WelcomeScreen(
             onValueChange = {
                 location = it
             },
-
-            modifier =
-                Modifier.fillMaxWidth(),
-
+            modifier = Modifier.fillMaxWidth(),
             label = {
                 Text("Branch / Location")
             },
-
             placeholder = {
                 Text("Enter branch / location")
             },
-
             singleLine = true,
-
-            shape =
-                RoundedCornerShape(12.dp)
+            shape = RoundedCornerShape(12.dp)
         )
 
         Spacer(
-            modifier =
-                Modifier.height(14.dp)
+            modifier = Modifier.height(14.dp)
         )
 
         OutlinedTextField(
@@ -494,27 +679,19 @@ fun WelcomeScreen(
             onValueChange = {
                 officerId = it
             },
-
-            modifier =
-                Modifier.fillMaxWidth(),
-
+            modifier = Modifier.fillMaxWidth(),
             label = {
                 Text("Officer ID")
             },
-
             placeholder = {
                 Text("Enter officer ID")
             },
-
             singleLine = true,
-
-            shape =
-                RoundedCornerShape(12.dp)
+            shape = RoundedCornerShape(12.dp)
         )
 
         Spacer(
-            modifier =
-                Modifier.height(14.dp)
+            modifier = Modifier.height(14.dp)
         )
 
         OutlinedTextField(
@@ -522,71 +699,47 @@ fun WelcomeScreen(
             onValueChange = {
                 password = it
             },
-
-            modifier =
-                Modifier.fillMaxWidth(),
-
+            modifier = Modifier.fillMaxWidth(),
             label = {
                 Text("Password")
             },
-
             placeholder = {
                 Text("Enter password")
             },
-
             singleLine = true,
-
-            shape =
-                RoundedCornerShape(12.dp)
+            shape = RoundedCornerShape(12.dp)
         )
 
         Spacer(
-            modifier =
-                Modifier.height(24.dp)
+            modifier = Modifier.height(24.dp)
         )
 
         Button(
-            onClick =
-                onLogin,
-
-            enabled =
-                canLogin,
-
+            onClick = onLogin,
+            enabled = canLogin,
             modifier =
                 Modifier
                     .fillMaxWidth()
                     .height(55.dp),
-
-            shape =
-                RoundedCornerShape(14.dp)
+            shape = RoundedCornerShape(14.dp)
         ) {
 
             Text(
-                text =
-                    "Officer Login",
-
-                fontSize =
-                    17.sp,
-
-                fontWeight =
-                    FontWeight.SemiBold
+                text = "Officer Login",
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold
             )
         }
 
         Spacer(
-            modifier =
-                Modifier.height(20.dp)
+            modifier = Modifier.height(20.dp)
         )
 
         Text(
             text =
                 "Privacy-first • On-device biometric verification",
-
-            fontSize =
-                12.sp,
-
-            color =
-                Color.Gray
+            fontSize = 12.sp,
+            color = Color.Gray
         )
     }
 }
@@ -604,8 +757,7 @@ fun KycQueueScreen(
     onAdmitCustomer: (Int) -> Unit
 ) {
 
-    val customers =
-        getCustomers()
+    val customers = getCustomers()
 
     val nextCustomerIndex =
         findNextCustomer(
@@ -620,95 +772,66 @@ fun KycQueueScreen(
     ) {
 
         Spacer(
-            modifier =
-                Modifier.height(20.dp)
+            modifier = Modifier.height(20.dp)
         )
 
         Text(
-            text =
-                "Officer Dashboard",
-
-            fontSize =
-                28.sp,
-
-            fontWeight =
-                FontWeight.Bold
+            text = "Officer Dashboard",
+            fontSize = 28.sp,
+            fontWeight = FontWeight.Bold
         )
 
         Spacer(
-            modifier =
-                Modifier.height(6.dp)
+            modifier = Modifier.height(6.dp)
         )
 
         Text(
             text =
                 "Manage customers waiting for online KYC",
-
-            fontSize =
-                14.sp,
-
-            color =
-                Color.Gray
+            fontSize = 14.sp,
+            color = Color.Gray
         )
 
         Spacer(
-            modifier =
-                Modifier.height(24.dp)
+            modifier = Modifier.height(24.dp)
         )
 
         Card(
-            modifier =
-                Modifier.fillMaxWidth(),
-
-            shape =
-                RoundedCornerShape(16.dp)
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp)
         ) {
 
             Column(
-                modifier =
-                    Modifier.padding(18.dp)
+                modifier = Modifier.padding(18.dp)
             ) {
 
                 Text(
-                    text =
-                        "ONLINE KYC QUEUE",
-
-                    fontSize =
-                        17.sp,
-
-                    fontWeight =
-                        FontWeight.Bold
+                    text = "ONLINE KYC QUEUE",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold
                 )
 
                 Spacer(
-                    modifier =
-                        Modifier.height(6.dp)
+                    modifier = Modifier.height(6.dp)
                 )
 
                 Text(
                     text =
                         "${customers.size} customers in queue",
-
-                    fontSize =
-                        13.sp,
-
-                    color =
-                        Color.Gray
+                    fontSize = 13.sp,
+                    color = Color.Gray
                 )
             }
         }
 
         Spacer(
-            modifier =
-                Modifier.height(16.dp)
+            modifier = Modifier.height(16.dp)
         )
 
         LazyColumn(
             verticalArrangement =
                 Arrangement.spacedBy(14.dp),
-
-            modifier =
-                Modifier.weight(1f)
+            modifier = Modifier.weight(1f)
         ) {
 
             itemsIndexed(
@@ -716,25 +839,19 @@ fun KycQueueScreen(
             ) { index, customer ->
 
                 val isCompleted =
-                    completedCustomers
-                        .contains(index)
+                    completedCustomers.contains(index)
 
                 val isSecurityHold =
-                    securityHoldCustomers
-                        .contains(index)
+                    securityHoldCustomers.contains(index)
 
                 val isNext =
-                    index ==
-                            nextCustomerIndex &&
+                    index == nextCustomerIndex &&
                             !isCompleted &&
                             !isSecurityHold
 
                 Card(
-                    modifier =
-                        Modifier.fillMaxWidth(),
-
-                    shape =
-                        RoundedCornerShape(16.dp)
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp)
                 ) {
 
                     Column(
@@ -804,9 +921,7 @@ fun KycQueueScreen(
                                     text =
                                         customer.name,
 
-                                    fontSize =
-                                        17.sp,
-
+                                    fontSize = 17.sp,
                                     fontWeight =
                                         FontWeight.SemiBold
                                 )
@@ -820,11 +935,8 @@ fun KycQueueScreen(
                                     text =
                                         customer.id,
 
-                                    fontSize =
-                                        13.sp,
-
-                                    color =
-                                        Color.Gray
+                                    fontSize = 13.sp,
+                                    color = Color.Gray
                                 )
 
                                 Spacer(
@@ -840,8 +952,7 @@ fun KycQueueScreen(
                                             text =
                                                 "⚠ Security Hold • 12 hours",
 
-                                            fontSize =
-                                                12.sp,
+                                            fontSize = 12.sp,
 
                                             color =
                                                 Color(0xFFC62828),
@@ -857,8 +968,7 @@ fun KycQueueScreen(
                                             text =
                                                 "✓ Verification Finished",
 
-                                            fontSize =
-                                                12.sp,
+                                            fontSize = 12.sp,
 
                                             color =
                                                 Color(0xFF2E7D32),
@@ -874,11 +984,9 @@ fun KycQueueScreen(
                                             text =
                                                 "Waiting • ${customer.waitTime}",
 
-                                            fontSize =
-                                                12.sp,
+                                            fontSize = 12.sp,
 
-                                            color =
-                                                Color.Gray
+                                            color = Color.Gray
                                         )
                                     }
                                 }
@@ -896,10 +1004,8 @@ fun KycQueueScreen(
                                 onClick = {
                                     onAdmitCustomer(index)
                                 },
-
                                 modifier =
                                     Modifier.fillMaxWidth(),
-
                                 shape =
                                     RoundedCornerShape(12.dp)
                             ) {
@@ -917,20 +1023,15 @@ fun KycQueueScreen(
 
                             OutlinedButton(
                                 onClick = { },
-
-                                enabled =
-                                    false,
-
+                                enabled = false,
                                 modifier =
                                     Modifier.fillMaxWidth(),
-
                                 shape =
                                     RoundedCornerShape(12.dp)
                             ) {
 
                                 Text(
-                                    text =
-                                        "Completed"
+                                    text = "Completed"
                                 )
                             }
 
@@ -938,13 +1039,9 @@ fun KycQueueScreen(
 
                             OutlinedButton(
                                 onClick = { },
-
-                                enabled =
-                                    false,
-
+                                enabled = false,
                                 modifier =
                                     Modifier.fillMaxWidth(),
-
                                 shape =
                                     RoundedCornerShape(12.dp)
                             ) {
@@ -959,20 +1056,15 @@ fun KycQueueScreen(
 
                             OutlinedButton(
                                 onClick = { },
-
-                                enabled =
-                                    false,
-
+                                enabled = false,
                                 modifier =
                                     Modifier.fillMaxWidth(),
-
                                 shape =
                                     RoundedCornerShape(12.dp)
                             ) {
 
                                 Text(
-                                    text =
-                                        "Waiting"
+                                    text = "Waiting"
                                 )
                             }
                         }
@@ -989,12 +1081,8 @@ fun KycQueueScreen(
         Text(
             text =
                 "Customers are admitted one at a time for secure KYC verification.",
-
-            fontSize =
-                12.sp,
-
-            color =
-                Color.Gray
+            fontSize = 12.sp,
+            color = Color.Gray
         )
     }
 }
@@ -1041,14 +1129,9 @@ fun KycDetailsScreen(
         )
 
         Text(
-            text =
-                "Customer KYC",
-
-            fontSize =
-                28.sp,
-
-            fontWeight =
-                FontWeight.Bold
+            text = "Customer KYC",
+            fontSize = 28.sp,
+            fontWeight = FontWeight.Bold
         )
 
         Spacer(
@@ -1059,9 +1142,7 @@ fun KycDetailsScreen(
         Text(
             text =
                 "Verify customer details before secure verification.",
-
-            color =
-                Color.Gray
+            color = Color.Gray
         )
 
         Spacer(
@@ -1070,22 +1151,16 @@ fun KycDetailsScreen(
         )
 
         OutlinedTextField(
-            value =
-                name,
-
+            value = name,
             onValueChange = {
                 name = it
             },
-
             modifier =
                 Modifier.fillMaxWidth(),
-
             label = {
                 Text("Customer Full Name")
             },
-
             singleLine = true,
-
             shape =
                 RoundedCornerShape(12.dp)
         )
@@ -1096,25 +1171,18 @@ fun KycDetailsScreen(
         )
 
         OutlinedTextField(
-            value =
-                reference,
-
+            value = reference,
             onValueChange = {
                 reference = it
             },
-
             modifier =
                 Modifier.fillMaxWidth(),
-
             label = {
                 Text("KYC Reference Number")
             },
-
             singleLine = true,
-
             shape =
                 RoundedCornerShape(12.dp),
-
             isError =
                 reference.isNotEmpty() &&
                         !validKycId
@@ -1129,8 +1197,7 @@ fun KycDetailsScreen(
                 text =
                     "Format: TKYC-2026-001",
 
-                fontSize =
-                    12.sp,
+                fontSize = 12.sp,
 
                 color =
                     MaterialTheme
@@ -1153,7 +1220,6 @@ fun KycDetailsScreen(
         Card(
             modifier =
                 Modifier.fillMaxWidth(),
-
             shape =
                 RoundedCornerShape(16.dp)
         ) {
@@ -1202,11 +1268,8 @@ fun KycDetailsScreen(
                     text =
                         "Biometric verification is processed locally on the device. No biometric video is uploaded to the cloud.",
 
-                    fontSize =
-                        13.sp,
-
-                    color =
-                        Color.Gray
+                    fontSize = 13.sp,
+                    color = Color.Gray
                 )
             }
         }
@@ -1217,30 +1280,20 @@ fun KycDetailsScreen(
         )
 
         Button(
-            onClick =
-                onContinue,
-
-            enabled =
-                canContinue,
-
+            onClick = onContinue,
+            enabled = canContinue,
             modifier =
                 Modifier
                     .fillMaxWidth()
                     .height(55.dp),
-
             shape =
                 RoundedCornerShape(14.dp)
         ) {
 
             Text(
-                text =
-                    "Continue",
-
-                fontSize =
-                    17.sp,
-
-                fontWeight =
-                    FontWeight.SemiBold
+                text = "Continue",
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold
             )
         }
     }
@@ -1272,11 +1325,8 @@ fun InstructionsScreen(
             text =
                 "Customer Instructions",
 
-            fontSize =
-                28.sp,
-
-            fontWeight =
-                FontWeight.Bold
+            fontSize = 28.sp,
+            fontWeight = FontWeight.Bold
         )
 
         Spacer(
@@ -1288,11 +1338,8 @@ fun InstructionsScreen(
             text =
                 "Please follow these steps before starting secure verification.",
 
-            fontSize =
-                14.sp,
-
-            color =
-                Color.Gray
+            fontSize = 14.sp,
+            color = Color.Gray
         )
 
         Spacer(
@@ -1338,7 +1385,6 @@ fun InstructionsScreen(
         Card(
             modifier =
                 Modifier.fillMaxWidth(),
-
             shape =
                 RoundedCornerShape(16.dp)
         ) {
@@ -1368,11 +1414,8 @@ fun InstructionsScreen(
                     text =
                         "Your biometric verification data stays on this device.",
 
-                    fontSize =
-                        13.sp,
-
-                    color =
-                        Color.Gray
+                    fontSize = 13.sp,
+                    color = Color.Gray
                 )
             }
         }
@@ -1399,11 +1442,8 @@ fun InstructionsScreen(
                 text =
                     "Start Secure Verification",
 
-                fontSize =
-                    17.sp,
-
-                fontWeight =
-                    FontWeight.SemiBold
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold
             )
         }
     }
@@ -1413,7 +1453,6 @@ fun InstructionsScreen(
 /* =========================================================
    CAMERA SCREEN
 ========================================================= */
-
 
 @OptIn(androidx.camera.core.ExperimentalGetImage::class)
 @Composable
@@ -1428,6 +1467,44 @@ fun CameraScreen(
 
     val lifecycleOwner =
         LocalLifecycleOwner.current
+
+    val gemma =
+        remember {
+            LocalKycGemma(context)
+        }
+
+    var gemmaReady by remember {
+        mutableStateOf(false)
+    }
+
+    var gemmaExplanation by remember {
+        mutableStateOf("")
+    }
+
+    var gemmaTriggered by remember {
+        mutableStateOf(false)
+    }
+
+    LaunchedEffect(Unit) {
+
+        gemma.initialize(
+
+            onReady = {
+                gemmaReady = true
+            },
+
+            onError = {
+                gemmaReady = false
+            }
+        )
+    }
+
+    DisposableEffect(Unit) {
+
+        onDispose {
+            gemma.close()
+        }
+    }
 
     var faceDetected by remember {
         mutableStateOf(false)
@@ -1450,6 +1527,10 @@ fun CameraScreen(
     }
 
     var suspiciousDetected by remember {
+        mutableStateOf(false)
+    }
+
+    var replayDetected by remember {
         mutableStateOf(false)
     }
 
@@ -1477,50 +1558,53 @@ fun CameraScreen(
             Executors.newSingleThreadExecutor()
         }
 
-
-    /* =====================================================
-       SMS PERMISSION
-    ===================================================== */
-
     val smsPermissionLauncher =
-        androidx.activity.compose.rememberLauncherForActivityResult(
-            ActivityResultContracts.RequestPermission()
-        ) { granted ->
+        androidx.activity.compose
+            .rememberLauncherForActivityResult(
+                ActivityResultContracts.RequestPermission()
+            ) { granted ->
 
-            smsRequestPending =
-                false
+                smsRequestPending = false
 
-            if (
-                granted &&
-                !smsSent
-            ) {
+                if (
+                    granted &&
+                    !smsSent
+                ) {
 
-                val sent =
-                    sendSecuritySms(
-                        context,
-                        customerPhoneNumber
-                    )
+                    val sent =
+                        sendSecuritySms(
+                            context,
+                            customerPhoneNumber
+                        )
 
-                if (sent) {
+                    if (sent) {
 
-                    smsSent =
-                        true
+                        smsSent = true
 
-                    securityExplanation =
-                        "⚠ Possible replay attack detected. Security SMS sent to the registered customer."
+                        /*
+                         * IMPORTANT:
+                         * Never replace the replay security message.
+                         */
+                        if (!replayDetected) {
 
-                } else {
+                            securityExplanation =
+                                "⚠ Security SMS sent to the registered customer."
+                        }
 
-                    securityExplanation =
-                        "⚠ Possible replay attack detected. SMS could not be sent."
+                    } else {
+
+                        /*
+                         * IMPORTANT:
+                         * Never replace the replay security message.
+                         */
+                        if (!replayDetected) {
+
+                            securityExplanation =
+                                "⚠ Security SMS could not be sent."
+                        }
+                    }
                 }
             }
-        }
-
-
-    /* =====================================================
-       SEND SMS ON REPLAY
-    ===================================================== */
 
     fun triggerSecuritySms() {
 
@@ -1547,17 +1631,22 @@ fun CameraScreen(
 
             if (sent) {
 
-                smsSent =
-                    true
+                smsSent = true
 
-                securityExplanation =
-                    "⚠ Possible replay attack detected. Security SMS sent to the registered customer."
+                /*
+                 * IMPORTANT:
+                 * Replay message always stays visible.
+                 */
+                if (!replayDetected) {
+
+                    securityExplanation =
+                        "⚠ Security SMS sent to the registered customer."
+                }
             }
 
         } else {
 
-            smsRequestPending =
-                true
+            smsRequestPending = true
 
             Handler(
                 Looper.getMainLooper()
@@ -1570,56 +1659,73 @@ fun CameraScreen(
         }
     }
 
-
-    /* =====================================================
-       MEDIAPIPE OBJECT DETECTOR
-    ===================================================== */
-
     val objectDetector =
         remember {
 
             try {
 
-                val baseOptions =
-                    BaseOptions
-                        .builder()
-                        .setModelAssetPath(
-                            "efficientdet_lite0.tflite"
-                        )
-                        .build()
+                val modelExists =
+                    try {
 
-                val detectorOptions =
+                        context.assets
+                            .open(
+                                "efficientdet_lite0.tflite"
+                            )
+                            .use { }
+
+                        true
+
+                    } catch (_: Exception) {
+
+                        false
+                    }
+
+                if (!modelExists) {
+
+                    null
+
+                } else {
+
+                    val baseOptions =
+                        BaseOptions
+                            .builder()
+                            .setModelAssetPath(
+                                "efficientdet_lite0.tflite"
+                            )
+                            .build()
+
+                    val detectorOptions =
+                        ObjectDetector
+                            .ObjectDetectorOptions
+                            .builder()
+                            .setBaseOptions(
+                                baseOptions
+                            )
+                            .setScoreThreshold(
+                                0.15f
+                            )
+                            .setMaxResults(
+                                10
+                            )
+                            .setRunningMode(
+                                RunningMode.IMAGE
+                            )
+                            .build()
+
                     ObjectDetector
-                        .ObjectDetectorOptions
-                        .builder()
-                        .setBaseOptions(
-                            baseOptions
+                        .createFromOptions(
+                            context,
+                            detectorOptions
                         )
-                        .setScoreThreshold(
-                            0.50f
-                        )
-                        .setMaxResults(
-                            5
-                        )
-                        .setRunningMode(
-                            RunningMode.IMAGE
-                        )
-                        .build()
+                }
 
-                ObjectDetector
-                    .createFromOptions(
-                        context,
-                        detectorOptions
-                    )
+            } catch (e: Exception) {
 
-            } catch (
-                e: Exception
-            ) {
+                e.printStackTrace()
 
                 null
             }
         }
-
 
     DisposableEffect(Unit) {
 
@@ -1630,7 +1736,6 @@ fun CameraScreen(
             objectDetector?.close()
         }
     }
-
 
     Column(
         modifier =
@@ -1643,22 +1748,14 @@ fun CameraScreen(
             text =
                 "Secure KYC Verification",
 
-            fontSize =
-                25.sp,
-
-            fontWeight =
-                FontWeight.Bold
+            fontSize = 25.sp,
+            fontWeight = FontWeight.Bold
         )
 
         Spacer(
             modifier =
                 Modifier.height(12.dp)
         )
-
-
-        /* =====================================================
-           SECURITY CHECK
-        ===================================================== */
 
         Card(
             modifier =
@@ -1677,11 +1774,8 @@ fun CameraScreen(
                     text =
                         "SECURITY CHECK",
 
-                    fontSize =
-                        14.sp,
-
-                    fontWeight =
-                        FontWeight.Bold
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
                 )
 
                 Spacer(
@@ -1713,7 +1807,7 @@ fun CameraScreen(
                     )
 
                     LivenessStatus(
-                        "CAMERA",
+                        "FACING",
                         facingCamera
                     )
                 }
@@ -1741,8 +1835,7 @@ fun CameraScreen(
                             else
                                 Color.Gray,
 
-                        fontSize =
-                            14.sp
+                        fontSize = 14.sp
                     )
 
                     Spacer(
@@ -1750,25 +1843,7 @@ fun CameraScreen(
                             Modifier.width(5.dp)
                     )
 
-                    Text(
-                        text =
-                            if (phoneDetected)
-                                "PHONE / SCREEN DETECTED"
-                            else
-                                "NO EXTRA PHONE DETECTED",
 
-                        fontSize =
-                            11.sp,
-
-                        fontWeight =
-                            FontWeight.Medium,
-
-                        color =
-                            if (phoneDetected)
-                                Color(0xFFC62828)
-                            else
-                                Color.DarkGray
-                    )
                 }
             }
         }
@@ -1777,11 +1852,6 @@ fun CameraScreen(
             modifier =
                 Modifier.height(12.dp)
         )
-
-
-        /* =====================================================
-           REPLAY WARNING
-        ===================================================== */
 
         if (phoneDetected) {
 
@@ -1808,8 +1878,7 @@ fun CameraScreen(
                         text =
                             "⚠ POSSIBLE REPLAY ATTACK",
 
-                        fontSize =
-                            16.sp,
+                        fontSize = 16.sp,
 
                         fontWeight =
                             FontWeight.Bold,
@@ -1827,8 +1896,7 @@ fun CameraScreen(
                         text =
                             "A phone/display appears to be visible in the verification view. Verification has been paused for security review.",
 
-                        fontSize =
-                            13.sp,
+                        fontSize = 13.sp,
 
                         color =
                             Color(0xFFC62828)
@@ -1845,8 +1913,7 @@ fun CameraScreen(
                             text =
                                 "📩 Security SMS sent to registered customer.",
 
-                            fontSize =
-                                13.sp,
+                            fontSize = 13.sp,
 
                             fontWeight =
                                 FontWeight.SemiBold,
@@ -1888,8 +1955,7 @@ fun CameraScreen(
                         text =
                             "⚠ SUSPICIOUS ACTIVITY",
 
-                        fontSize =
-                            16.sp,
+                        fontSize = 16.sp,
 
                         fontWeight =
                             FontWeight.Bold,
@@ -1905,10 +1971,9 @@ fun CameraScreen(
 
                     Text(
                         text =
-                            "Customer is not facing the camera. Verification requires security review.",
+                            "Suspicious activity was detected during this verification. Verification cannot be completed.",
 
-                        fontSize =
-                            13.sp,
+                        fontSize = 13.sp,
 
                         color =
                             Color(0xFFC62828)
@@ -1947,8 +2012,7 @@ fun CameraScreen(
                     modifier =
                         Modifier.padding(14.dp),
 
-                    fontSize =
-                        16.sp,
+                    fontSize = 16.sp,
 
                     fontWeight =
                         FontWeight.Bold,
@@ -1963,11 +2027,6 @@ fun CameraScreen(
                     Modifier.height(10.dp)
             )
         }
-
-
-        /* =====================================================
-           CAMERA PREVIEW
-        ===================================================== */
 
         Box(
             modifier =
@@ -1988,9 +2047,7 @@ fun CameraScreen(
                 factory = { viewContext ->
 
                     val previewView =
-                        PreviewView(
-                            viewContext
-                        )
+                        PreviewView(viewContext)
 
                     val cameraProviderFuture =
                         ProcessCameraProvider
@@ -2002,8 +2059,7 @@ fun CameraScreen(
                         .addListener({
 
                             val cameraProvider =
-                                cameraProviderFuture
-                                    .get()
+                                cameraProviderFuture.get()
 
                             val preview =
                                 Preview.Builder()
@@ -2016,11 +2072,6 @@ fun CameraScreen(
                                                 .surfaceProvider
                                     }
 
-
-                            /* =================================
-                               IMAGE ANALYSIS
-                            ================================= */
-
                             val imageAnalysis =
                                 ImageAnalysis
                                     .Builder()
@@ -2029,11 +2080,6 @@ fun CameraScreen(
                                             .STRATEGY_KEEP_ONLY_LATEST
                                     )
                                     .build()
-
-
-                            /* =================================
-                               FACE DETECTOR
-                            ================================= */
 
                             val faceOptions =
                                 FaceDetectorOptions
@@ -2053,11 +2099,6 @@ fun CameraScreen(
                                     .getClient(
                                         faceOptions
                                     )
-
-
-                            /* =================================
-                               FRAME ANALYZER
-                            ================================= */
 
                             imageAnalysis
                                 .setAnalyzer(
@@ -2079,11 +2120,6 @@ fun CameraScreen(
                                             imageProxy
                                                 .imageInfo
                                                 .rotationDegrees
-
-
-                                        /* =========================
-                                           FACE ANALYSIS
-                                        ========================= */
 
                                         val inputImage =
                                             InputImage
@@ -2108,9 +2144,6 @@ fun CameraScreen(
                                                     faceDetected =
                                                         true
 
-
-                                                    /* BLINK */
-
                                                     if (
                                                         detectBlink(
                                                             face
@@ -2121,16 +2154,10 @@ fun CameraScreen(
                                                             true
                                                     }
 
-
-                                                    /* CAMERA FACING */
-
                                                     facingCamera =
                                                         isFacingCamera(
                                                             face
                                                         )
-
-
-                                                    /* MOVEMENT */
 
                                                     val currentX =
                                                         face
@@ -2164,12 +2191,17 @@ fun CameraScreen(
                                                     previousX =
                                                         currentX
 
-
-                                                    /* CAMERA WARNING */
+                                                    /*
+                                                     * FACE ANALYSIS
+                                                     *
+                                                     * Replay always has priority.
+                                                     */
 
                                                     if (
+                                                        !replayDetected &&
                                                         !facingCamera &&
-                                                        !phoneDetected
+                                                        !phoneDetected &&
+                                                        !suspiciousDetected
                                                     ) {
 
                                                         suspiciousDetected =
@@ -2178,31 +2210,53 @@ fun CameraScreen(
                                                         securityExplanation =
                                                             "⚠ Customer is not facing the camera. Verification paused for security."
 
-                                                    } else if (
+                                                        if (
+                                                            gemmaReady &&
+                                                            !gemmaTriggered
+                                                        ) {
+
+                                                            gemmaTriggered =
+                                                                true
+
+                                                            gemma.generateSecurityExplanation(
+
+                                                                "The customer's face is not aligned toward the verification camera during KYC."
+                                                            ) { explanation ->
+
+                                                                gemmaExplanation =
+                                                                    explanation
+
+                                                                if (
+                                                                    !replayDetected
+                                                                ) {
+
+                                                                    securityExplanation =
+                                                                        "⚠ $explanation"
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
+                                                    if (
+                                                        !replayDetected &&
                                                         facingCamera &&
+                                                        !suspiciousDetected &&
                                                         !phoneDetected
                                                     ) {
-
-                                                        suspiciousDetected =
-                                                            false
 
                                                         securityExplanation =
                                                             "✓ Customer is facing the camera. Continue verification."
                                                     }
 
-
-                                                    /* FINAL FACE CHECK */
-
                                                     if (
+                                                        !replayDetected &&
                                                         faceDetected &&
                                                         facingCamera &&
                                                         blinkDetected &&
                                                         liveDetected &&
-                                                        !phoneDetected
+                                                        !phoneDetected &&
+                                                        !suspiciousDetected
                                                     ) {
-
-                                                        suspiciousDetected =
-                                                            false
 
                                                         securityExplanation =
                                                             "✓ Face, blink, movement and camera-facing signals verified locally."
@@ -2210,33 +2264,30 @@ fun CameraScreen(
 
                                                 } else {
 
-                                                    faceDetected =
-                                                        false
+                                                    faceDetected = false
 
-                                                    blinkDetected =
-                                                        false
+                                                    blinkDetected = false
 
-                                                    liveDetected =
-                                                        false
+                                                    liveDetected = false
 
-                                                    facingCamera =
-                                                        false
+                                                    facingCamera = false
 
-                                                    suspiciousDetected =
-                                                        false
+                                                    previousX = null
 
-                                                    previousX =
-                                                        null
+                                                    if (
+                                                        !replayDetected &&
+                                                        !suspiciousDetected
+                                                    ) {
 
-                                                    securityExplanation =
-                                                        "No face detected. Ask the customer to look directly at the camera."
+                                                        securityExplanation =
+                                                            "No face detected. Ask the customer to look directly at the camera."
+                                                    }
                                                 }
                                             }
 
-
-                                        /* =========================
-                                           PHONE DETECTION
-                                        ========================= */
+                                        /*
+                                         * PHONE / REPLAY DETECTION
+                                         */
 
                                         if (
                                             objectDetector != null
@@ -2276,12 +2327,23 @@ fun CameraScreen(
                                                             category
                                                                 .score()
 
-                                                        if (
+                                                        val isPhoneLabel =
                                                             label.equals(
                                                                 "cell phone",
                                                                 ignoreCase = true
-                                                            ) &&
-                                                            score >= 0.50f
+                                                            ) ||
+                                                                    label.equals(
+                                                                        "mobile phone",
+                                                                        ignoreCase = true
+                                                                    ) ||
+                                                                    label.contains(
+                                                                        "phone",
+                                                                        ignoreCase = true
+                                                                    )
+
+                                                        if (
+                                                            isPhoneLabel &&
+                                                            score >= 0.15f
                                                         ) {
 
                                                             foundPhone =
@@ -2298,22 +2360,65 @@ fun CameraScreen(
                                                     }
                                                 }
 
-                                                phoneDetected =
-                                                    foundPhone
+                                                if (foundPhone) {
 
-                                                if (
-                                                    foundPhone
-                                                ) {
+                                                    /*
+                                                     * REPLAY = HIGHEST PRIORITY
+                                                     */
+
+                                                    phoneDetected =
+                                                        true
 
                                                     suspiciousDetected =
                                                         true
 
-                                                    securityExplanation =
-                                                        "⚠ Possible replay attack. A phone/display was detected in the verification view."
+                                                    replayDetected =
+                                                        true
 
                                                     /*
-                                                     * SMS ONLY ONCE
+                                                     * THIS MESSAGE IS NOW
+                                                     * THE AUTHORITATIVE
+                                                     * REPLAY MESSAGE.
                                                      */
+                                                    securityExplanation =
+                                                        "⚠ POSSIBLE REPLAY ATTACK DETECTED. Verification paused for security review."
+
+                                                    if (
+                                                        gemmaReady &&
+                                                        !gemmaTriggered
+                                                    ) {
+
+                                                        gemmaTriggered =
+                                                            true
+
+                                                        gemma.generateSecurityExplanation(
+
+                                                            "A possible replay attack was detected during KYC verification. A secondary display may be replaying a recorded verification video."
+                                                        ) { explanation ->
+
+                                                            gemmaExplanation =
+                                                                explanation
+
+                                                            /*
+                                                             * Gemma response is stored,
+                                                             * but replay message remains
+                                                             * visible.
+                                                             */
+                                                            if (
+                                                                replayDetected
+                                                            ) {
+
+                                                                securityExplanation =
+                                                                    "⚠ POSSIBLE REPLAY ATTACK DETECTED. Verification paused for security review."
+
+                                                            } else {
+
+                                                                securityExplanation =
+                                                                    "⚠ $explanation"
+                                                            }
+                                                        }
+                                                    }
+
                                                     Handler(
                                                         Looper.getMainLooper()
                                                     ).post {
@@ -2333,11 +2438,6 @@ fun CameraScreen(
                                         imageProxy.close()
                                     }
                                 }
-
-
-                            /* =================================
-                               START FRONT CAMERA
-                            ================================= */
 
                             cameraProvider.unbindAll()
 
@@ -2365,11 +2465,6 @@ fun CameraScreen(
                 Modifier.height(12.dp)
         )
 
-
-        /* =====================================================
-           LOCAL SECURITY ANALYSIS
-        ===================================================== */
-
         Card(
             modifier =
                 Modifier.fillMaxWidth(),
@@ -2387,11 +2482,8 @@ fun CameraScreen(
                     text =
                         "LOCAL SECURITY ANALYSIS",
 
-                    fontSize =
-                        13.sp,
-
-                    fontWeight =
-                        FontWeight.Bold
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
                 )
 
                 Spacer(
@@ -2403,12 +2495,30 @@ fun CameraScreen(
                     text =
                         securityExplanation,
 
-                    fontSize =
-                        13.sp,
-
-                    color =
-                        Color.DarkGray
+                    fontSize = 13.sp,
+                    color = Color.DarkGray
                 )
+
+                if (gemmaReady) {
+
+                    Spacer(
+                        modifier =
+                            Modifier.height(8.dp)
+                    )
+
+                    Text(
+                        text =
+                            "✓ Gemma on-device AI ready",
+
+                        fontSize = 12.sp,
+
+                        fontWeight =
+                            FontWeight.SemiBold,
+
+                        color =
+                            Color(0xFF2E7D32)
+                    )
+                }
 
                 if (smsSent) {
 
@@ -2421,8 +2531,7 @@ fun CameraScreen(
                         text =
                             "📩 Customer security SMS sent",
 
-                        fontSize =
-                            12.sp,
+                        fontSize = 12.sp,
 
                         fontWeight =
                             FontWeight.SemiBold,
@@ -2443,22 +2552,14 @@ fun CameraScreen(
             text =
                 "100% ON-DEVICE • No biometric data leaves this device",
 
-            fontSize =
-                11.sp,
-
-            color =
-                Color.Gray
+            fontSize = 11.sp,
+            color = Color.Gray
         )
 
         Spacer(
             modifier =
                 Modifier.height(10.dp)
         )
-
-
-        /* =====================================================
-           FINAL ACTION
-        ===================================================== */
 
         if (
             faceDetected &&
@@ -2536,627 +2637,10 @@ fun CameraScreen(
                 modifier =
                     Modifier.fillMaxWidth(),
 
-                fontSize =
-                    13.sp,
-
-                color =
-                    Color.Gray
+                fontSize = 13.sp,
+                color = Color.Gray
             )
         }
-    }
-}
-
-
-/* =========================================================
-   CAMERA FACING
-========================================================= */
-
-fun isFacingCamera(
-    face: Face
-): Boolean {
-
-    val yaw =
-        face.headEulerAngleY
-
-    val roll =
-        face.headEulerAngleZ
-
-    return kotlin.math.abs(yaw) < 15f &&
-            kotlin.math.abs(roll) < 15f
-}
-
-
-/* =========================================================
-   BLINK
-========================================================= */
-
-fun detectBlink(
-    face: Face
-): Boolean {
-
-    val leftEye =
-        face.leftEyeOpenProbability
-
-    val rightEye =
-        face.rightEyeOpenProbability
-
-    if (
-        leftEye != null &&
-        rightEye != null
-    ) {
-
-        return leftEye < 0.4f &&
-                rightEye < 0.4f
-    }
-
-    return false
-}
-
-
-/* =========================================================
-   RESULT SCREEN
-========================================================= */
-
-@Composable
-fun VerificationResultScreen(
-    verified: Boolean,
-    customerName: String,
-    onNextCustomer: () -> Unit
-) {
-
-    Column(
-        modifier =
-            Modifier
-                .fillMaxSize()
-                .padding(24.dp),
-
-        horizontalAlignment =
-            Alignment.CenterHorizontally
-    ) {
-
-        Spacer(
-            modifier =
-                Modifier.height(60.dp)
-        )
-
-        if (verified) {
-
-            Icon(
-                imageVector =
-                    Icons.Default.CheckCircle,
-
-                contentDescription =
-                    null,
-
-                tint =
-                    Color(0xFF2E7D32),
-
-                modifier =
-                    Modifier.size(80.dp)
-            )
-
-            Spacer(
-                modifier =
-                    Modifier.height(20.dp)
-            )
-
-            Text(
-                text =
-                    "VERIFICATION COMPLETE",
-
-                fontSize =
-                    23.sp,
-
-                fontWeight =
-                    FontWeight.Bold
-            )
-
-            Spacer(
-                modifier =
-                    Modifier.height(8.dp)
-            )
-
-            Text(
-                text =
-                    "✓ VERIFIED",
-
-                color =
-                    Color(0xFF2E7D32),
-
-                fontSize =
-                    18.sp,
-
-                fontWeight =
-                    FontWeight.Bold
-            )
-
-            Spacer(
-                modifier =
-                    Modifier.height(24.dp)
-            )
-
-            ResultItem(
-                "Face presence verified"
-            )
-
-            ResultItem(
-                "Camera-facing verified"
-            )
-
-            ResultItem(
-                "Blink response verified"
-            )
-
-            ResultItem(
-                "Natural movement verified"
-            )
-
-            ResultItem(
-                "No visible replay device detected"
-            )
-
-            ResultItem(
-                "Local security checks completed"
-            )
-
-            Spacer(
-                modifier =
-                    Modifier.height(25.dp)
-            )
-
-            PrivacyCard()
-
-        } else {
-
-            Icon(
-                imageVector =
-                    Icons.Default.Error,
-
-                contentDescription =
-                    null,
-
-                tint =
-                    Color(0xFFC62828),
-
-                modifier =
-                    Modifier.size(80.dp)
-            )
-
-            Spacer(
-                modifier =
-                    Modifier.height(20.dp)
-            )
-
-            Text(
-                text =
-                    "VERIFICATION PAUSED",
-
-                fontSize =
-                    23.sp,
-
-                fontWeight =
-                    FontWeight.Bold
-            )
-
-            Spacer(
-                modifier =
-                    Modifier.height(8.dp)
-            )
-
-            Text(
-                text =
-                    "⚠ NOT VERIFIED",
-
-                color =
-                    Color(0xFFC62828),
-
-                fontSize =
-                    18.sp,
-
-                fontWeight =
-                    FontWeight.Bold
-            )
-
-            Spacer(
-                modifier =
-                    Modifier.height(18.dp)
-            )
-
-            Text(
-                text =
-                    "$customerName verification was flagged for security review.",
-
-                fontSize =
-                    15.sp
-            )
-
-            Spacer(
-                modifier =
-                    Modifier.height(20.dp)
-            )
-
-            Card(
-                modifier =
-                    Modifier.fillMaxWidth(),
-
-                shape =
-                    RoundedCornerShape(14.dp),
-
-                colors =
-                    CardDefaults.cardColors(
-                        containerColor =
-                            Color(0xFFFFF8E1)
-                    )
-            ) {
-
-                Column(
-                    modifier =
-                        Modifier.padding(16.dp)
-                ) {
-
-                    Text(
-                        text =
-                            "🔔 SECURITY ALERT",
-
-                        fontWeight =
-                            FontWeight.Bold,
-
-                        color =
-                            Color(0xFFE65100)
-                    )
-
-                    Spacer(
-                        modifier =
-                            Modifier.height(8.dp)
-                    )
-
-                    Text(
-                        text =
-                            "Security notification sent to the registered customer.",
-
-                        fontSize =
-                            13.sp
-                    )
-
-
-
-
-                    Spacer(
-                        modifier =
-                            Modifier.height(8.dp)
-                    )
-
-                    Text(
-                        text =
-                            "🔒 12-hour verification hold activated.",
-
-                        fontSize =
-                            13.sp,
-
-                        color =
-                            Color(0xFFC62828),
-
-                        fontWeight =
-                            FontWeight.SemiBold
-                    )
-                }
-            }
-
-            Spacer(
-                modifier =
-                    Modifier.height(20.dp)
-            )
-
-            PrivacyCard()
-        }
-
-        Spacer(
-            modifier =
-                Modifier.weight(1f)
-        )
-
-        Button(
-            onClick =
-                onNextCustomer,
-
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .height(55.dp),
-
-            shape =
-                RoundedCornerShape(14.dp)
-        ) {
-
-            Text(
-                text =
-                    "Next Customer",
-
-                fontSize =
-                    17.sp
-            )
-        }
-    }
-}
-
-
-/* =========================================================
-   SECURITY LOCK SCREEN
-========================================================= */
-
-@Composable
-fun SecurityLockScreen(
-    customerName: String,
-    onBack: () -> Unit
-) {
-
-    Column(
-        modifier =
-            Modifier
-                .fillMaxSize()
-                .padding(24.dp),
-
-        horizontalAlignment =
-            Alignment.CenterHorizontally,
-
-        verticalArrangement =
-            Arrangement.Center
-    ) {
-
-        Text(
-            text =
-                "⚠️",
-
-            fontSize =
-                60.sp
-        )
-
-        Spacer(
-            modifier =
-                Modifier.height(16.dp)
-        )
-
-        Text(
-            text =
-                "VERIFICATION TEMPORARILY LOCKED",
-
-            fontSize =
-                22.sp,
-
-            fontWeight =
-                FontWeight.Bold
-        )
-
-        Spacer(
-            modifier =
-                Modifier.height(14.dp)
-        )
-
-        Text(
-            text =
-                "$customerName has a security hold.",
-
-            fontSize =
-                16.sp
-        )
-
-        Spacer(
-            modifier =
-                Modifier.height(10.dp)
-        )
-
-        Text(
-            text =
-                "Re-verification is temporarily unavailable for 12 hours.",
-
-            fontSize =
-                14.sp,
-
-            color =
-                Color.Gray
-        )
-
-        Spacer(
-            modifier =
-                Modifier.height(20.dp)
-        )
-
-        Card(
-            modifier =
-                Modifier.fillMaxWidth(),
-
-            shape =
-                RoundedCornerShape(16.dp)
-        ) {
-
-            Column(
-                modifier =
-                    Modifier.padding(18.dp)
-            ) {
-
-                Text(
-                    text =
-                        "🔔 SECURITY ALERT",
-
-                    fontWeight =
-                        FontWeight.Bold,
-
-                    color =
-                        Color(0xFFC62828)
-                )
-
-                Spacer(
-                    modifier =
-                        Modifier.height(8.dp)
-                )
-
-                Text(
-                    text =
-                        "Customer security SMS sent.",
-
-                    fontSize =
-                        13.sp
-                )
-
-                Spacer(
-                    modifier =
-                        Modifier.height(8.dp)
-                )
-
-                Text(
-                    text =
-                        "🏦 Bank review required",
-
-                    fontSize =
-                        13.sp
-                )
-
-                Spacer(
-                    modifier =
-                        Modifier.height(8.dp)
-                )
-
-                Text(
-                    text =
-                        "🔒 12-hour verification hold",
-
-                    fontSize =
-                        13.sp
-                )
-            }
-        }
-
-        Spacer(
-            modifier =
-                Modifier.height(24.dp)
-        )
-
-        Button(
-            onClick =
-                onBack,
-
-            modifier =
-                Modifier.fillMaxWidth(),
-
-            shape =
-                RoundedCornerShape(14.dp)
-        ) {
-
-            Text(
-                text =
-                    "Back to KYC Queue"
-            )
-        }
-    }
-}
-
-
-/* =========================================================
-   LIVENESS STATUS
-========================================================= */
-
-@Composable
-fun LivenessStatus(
-    label: String,
-    detected: Boolean
-) {
-
-    Row(
-        verticalAlignment =
-            Alignment.CenterVertically
-    ) {
-
-        Text(
-            text =
-                if (detected)
-                    "●"
-                else
-                    "○",
-
-            color =
-                if (detected)
-                    Color(0xFF2E7D32)
-                else
-                    Color.Gray,
-
-            fontSize =
-                14.sp
-        )
-
-        Spacer(
-            modifier =
-                Modifier.width(4.dp)
-        )
-
-        Text(
-            text =
-                label,
-
-            fontSize =
-                11.sp,
-
-            fontWeight =
-                FontWeight.Medium
-        )
-    }
-}
-
-
-/* =========================================================
-   INSTRUCTION ITEM
-========================================================= */
-
-@Composable
-fun InstructionItem(
-    number: String,
-    text: String
-) {
-
-    Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .padding(vertical = 9.dp),
-
-        verticalAlignment =
-            Alignment.CenterVertically
-    ) {
-
-        Surface(
-            shape =
-                RoundedCornerShape(50),
-
-            color =
-                Color(0xFFE8EAF6)
-        ) {
-
-            Text(
-                text =
-                    number,
-
-                modifier =
-                    Modifier.padding(
-                        horizontal = 10.dp,
-                        vertical = 6.dp
-                    ),
-
-                fontWeight =
-                    FontWeight.Bold
-            )
-        }
-
-        Spacer(
-            modifier =
-                Modifier.width(12.dp)
-        )
-
-        Text(
-            text =
-                text,
-
-            fontSize =
-                14.sp
-        )
     }
 }
 
@@ -3200,11 +2684,8 @@ fun ResultItem(
         )
 
         Text(
-            text =
-                text,
-
-            fontSize =
-                14.sp
+            text = text,
+            fontSize = 14.sp
         )
     }
 }
@@ -3250,11 +2731,357 @@ fun PrivacyCard() {
                 text =
                     "Biometric verification is processed locally. No biometric video is sent to a cloud server.",
 
-                fontSize =
-                    13.sp,
+                fontSize = 13.sp,
+                color = Color.Gray
+            )
+        }
+    }
+}
 
-                color =
+
+/* =========================================================
+   INSTRUCTION ITEM
+========================================================= */
+
+@Composable
+fun InstructionItem(
+    number: String,
+    text: String
+) {
+
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+
+        verticalAlignment =
+            Alignment.CenterVertically
+    ) {
+
+        Surface(
+            shape =
+                RoundedCornerShape(50),
+
+            color =
+                Color(0xFFE8EAF6)
+        ) {
+
+            Text(
+                text = number,
+
+                modifier =
+                    Modifier.padding(
+                        horizontal = 12.dp,
+                        vertical = 8.dp
+                    ),
+
+                fontWeight =
+                    FontWeight.Bold
+            )
+        }
+
+        Spacer(
+            modifier =
+                Modifier.width(12.dp)
+        )
+
+        Text(
+            text = text,
+            fontSize = 14.sp
+        )
+    }
+}
+
+
+/* =========================================================
+   LIVENESS STATUS
+========================================================= */
+
+@Composable
+fun LivenessStatus(
+    title: String,
+    passed: Boolean
+) {
+
+    Column(
+        horizontalAlignment =
+            Alignment.CenterHorizontally
+    ) {
+
+        Text(
+            text =
+                if (passed) "●" else "○",
+
+            fontSize = 16.sp,
+
+            fontWeight =
+                FontWeight.Bold,
+
+            color =
+                if (passed)
+                    Color(0xFF2E7D32)
+                else
                     Color.Gray
+        )
+
+        Spacer(
+            modifier =
+                Modifier.height(2.dp)
+        )
+
+        Text(
+            text = title,
+
+            fontSize = 9.sp,
+
+            fontWeight =
+                FontWeight.Medium,
+
+            color =
+                if (passed)
+                    Color(0xFF2E7D32)
+                else
+                    Color.Gray
+        )
+    }
+}
+
+
+/* =========================================================
+   FACE HELPERS
+========================================================= */
+
+fun isFacingCamera(
+    face: Face
+): Boolean {
+
+    val yaw =
+        face.headEulerAngleY
+
+    val roll =
+        face.headEulerAngleZ
+
+    return (
+            kotlin.math.abs(yaw) < 15f &&
+                    kotlin.math.abs(roll) < 15f
+            )
+}
+
+
+fun detectBlink(
+    face: Face
+): Boolean {
+
+    val leftEye =
+        face.leftEyeOpenProbability
+
+    val rightEye =
+        face.rightEyeOpenProbability
+
+    if (
+        leftEye != null &&
+        rightEye != null
+    ) {
+
+        return (
+                leftEye < 0.4f &&
+                        rightEye < 0.4f
+                )
+    }
+
+    return false
+}
+
+
+/* =========================================================
+   VERIFICATION RESULT SCREEN
+========================================================= */
+
+@Composable
+fun VerificationResultScreen(
+    verified: Boolean,
+    customerName: String,
+    onNextCustomer: () -> Unit
+) {
+
+    Column(
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .padding(24.dp)
+    ) {
+
+        Spacer(
+            modifier =
+                Modifier.height(30.dp)
+        )
+
+        Icon(
+            imageVector =
+                if (verified)
+                    Icons.Default.CheckCircle
+                else
+                    Icons.Default.Error,
+
+            contentDescription =
+                null,
+
+            modifier =
+                Modifier.size(80.dp),
+
+            tint =
+                if (verified)
+                    Color(0xFF2E7D32)
+                else
+                    Color(0xFFC62828)
+        )
+
+        Spacer(
+            modifier =
+                Modifier.height(20.dp)
+        )
+
+        Text(
+            text =
+                if (verified)
+                    "KYC Verification Successful"
+                else
+                    "KYC Verification Paused",
+
+            fontSize = 27.sp,
+            fontWeight = FontWeight.Bold
+        )
+
+        Spacer(
+            modifier =
+                Modifier.height(8.dp)
+        )
+
+        Text(
+            text = customerName,
+
+            fontSize = 16.sp,
+            color = Color.Gray
+        )
+
+        Spacer(
+            modifier =
+                Modifier.height(24.dp)
+        )
+
+        Card(
+            modifier =
+                Modifier.fillMaxWidth(),
+
+            shape =
+                RoundedCornerShape(16.dp),
+
+            colors =
+                CardDefaults.cardColors(
+                    containerColor =
+                        if (verified)
+                            Color(0xFFE8F5E9)
+                        else
+                            Color(0xFFFFEBEE)
+                )
+        ) {
+
+            Column(
+                modifier =
+                    Modifier.padding(18.dp)
+            ) {
+
+                Text(
+                    text =
+                        if (verified)
+                            "✓ Verification completed"
+                        else
+                            "⚠ Security review required",
+
+                    fontSize = 17.sp,
+
+                    fontWeight =
+                        FontWeight.Bold,
+
+                    color =
+                        if (verified)
+                            Color(0xFF2E7D32)
+                        else
+                            Color(0xFFC62828)
+                )
+
+                Spacer(
+                    modifier =
+                        Modifier.height(12.dp)
+                )
+
+                if (verified) {
+
+                    ResultItem(
+                        "Face verification completed"
+                    )
+
+                    ResultItem(
+                        "Liveness signals verified"
+                    )
+
+                    ResultItem(
+                        "On-device security analysis completed"
+                    )
+
+                    ResultItem(
+                        "No replay device detected"
+                    )
+
+                } else {
+
+                    Text(
+                        text =
+                            "The verification attempt has been placed on security hold. Further review is required before continuing.",
+
+                        fontSize = 14.sp,
+
+                        color =
+                            Color(0xFFC62828)
+                    )
+                }
+            }
+        }
+
+        Spacer(
+            modifier =
+                Modifier.height(20.dp)
+        )
+
+        PrivacyCard()
+
+        Spacer(
+            modifier =
+                Modifier.weight(1f)
+        )
+
+        Button(
+            onClick =
+                onNextCustomer,
+
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .height(55.dp),
+
+            shape =
+                RoundedCornerShape(14.dp)
+        ) {
+
+            Text(
+                text =
+                    "Back to Customer Queue",
+
+                fontSize = 16.sp,
+
+                fontWeight =
+                    FontWeight.SemiBold
             )
         }
     }

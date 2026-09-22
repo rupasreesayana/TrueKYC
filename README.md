@@ -51,7 +51,7 @@ TrueKYC is designed with a privacy-first approach. Security analysis is performe
 ## Demo
 
 Demo video:  
-[YouTube Demo](https://youtube.com/shorts/Mnha0pW9xVA?si=zp8mz_PZQqroRKsr)
+[YouTube Demo](https://youtube.com/shorts/mQgxQBsAdJg?si=rSl7Aa71IbC_q0vO)
 
 ## Prototype
 
